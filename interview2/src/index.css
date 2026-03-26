@@ -1,0 +1,52 @@
+:root {
+  font-family:
+    'Pretendard Variable',
+    'Pretendard',
+    'Noto Sans KR',
+    'Apple SD Gothic Neo',
+    sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #1e293b;
+  background:
+    radial-gradient(circle at top left, rgba(255, 244, 214, 0.95), transparent 28%),
+    radial-gradient(circle at top right, rgba(193, 230, 255, 0.8), transparent 30%),
+    linear-gradient(180deg, #fff8ec 0%, #f5f7fb 45%, #eef3f8 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --bg-panel: rgba(255, 255, 255, 0.82);
+  --line: rgba(148, 163, 184, 0.22);
+  --text-main: #172033;
+  --text-muted: #56627a;
+  --accent: #0f766e;
+  --accent-strong: #0b5d57;
+  --danger: #b91c1c;
+  --success: #166534;
+  --shadow: 0 24px 60px rgba(15, 23, 42, 0.09);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text-main);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+a {
+  color: var(--accent-strong);
+}
