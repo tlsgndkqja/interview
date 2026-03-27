@@ -13,14 +13,17 @@ import type {
   SlotRow,
 } from './types'
 import {
-  buildHourlySlots,
+  buildHourlySlotsExcludingDates,
   formatDate,
   formatDateRange,
   formatSlotLabel,
+  formatTimeValue,
   getBaseUrl,
   getSlotKey,
   getTodayInputValue,
+  loadExcludedHolidayDates,
   randomCode,
+  randomPin,
 } from './lib/time'
 
 type EventBundle = {
@@ -32,7 +35,8 @@ type EventBundle = {
 
 type CreatedLinks = {
   managementLink: string
-  participantLinks: Array<{ name: string; link: string }>
+  managementPin: string
+  participantLinks: Array<{ name: string; link: string; pin: string }>
 }
 
 const defaultParticipants = ['', '', '']
@@ -53,12 +57,14 @@ function groupSlotsByDate<T extends { slot_date: string }>(slots: T[]) {
   }))
 }
 
-async function fetchManageBundle(managementCode: string): Promise<EventBundle> {
-  const { data: eventRow, error: eventError } = await supabase
-    .from('interview_events')
-    .select('*')
-    .eq('management_code', managementCode)
-    .single()
+async function fetchManageBundle(managementCode: string, managementPin?: string): Promise<EventBundle> {
+  let eventQuery = supabase.from('interview_events').select('*').eq('management_code', managementCode)
+
+  if (managementPin) {
+    eventQuery = eventQuery.eq('management_pin', managementPin)
+  }
+
+  const { data: eventRow, error: eventError } = await eventQuery.single()
 
   if (eventError || !eventRow) {
     throw eventError ?? new Error('일정을 찾을 수 없습니다.')
@@ -107,12 +113,17 @@ async function fetchManageBundle(managementCode: string): Promise<EventBundle> {
   }
 }
 
-async function fetchInviteBundle(inviteCode: string) {
-  const { data: participantRow, error: participantError } = await supabase
+async function fetchInviteBundle(inviteCode: string, accessPin?: string) {
+  let participantQuery = supabase
     .from('interview_participants')
     .select('*')
     .eq('invite_code', inviteCode)
-    .single()
+
+  if (accessPin) {
+    participantQuery = participantQuery.eq('access_pin', accessPin)
+  }
+
+  const { data: participantRow, error: participantError } = await participantQuery.single()
 
   if (participantError || !participantRow) {
     throw participantError ?? new Error('초대 링크를 찾을 수 없습니다.')
@@ -170,6 +181,54 @@ async function fetchInviteBundle(inviteCode: string) {
   }
 }
 
+async function fetchManageAccess(managementCode: string) {
+  const { data, error } = await supabase
+    .from('interview_events')
+    .select('title, management_pin')
+    .eq('management_code', managementCode)
+    .single()
+
+  if (error || !data) {
+    throw error ?? new Error('일정을 찾을 수 없습니다.')
+  }
+
+  return data
+}
+
+async function fetchInviteAccess(inviteCode: string) {
+  const { data, error } = await supabase
+    .from('interview_participants')
+    .select('name, access_pin')
+    .eq('invite_code', inviteCode)
+    .single()
+
+  if (error || !data) {
+    throw error ?? new Error('초대 링크를 찾을 수 없습니다.')
+  }
+
+  return data
+}
+
+function getStoredPin(storageKey: string) {
+  if (typeof window === 'undefined') {
+    return ''
+  }
+
+  return window.sessionStorage.getItem(storageKey) ?? ''
+}
+
+function setStoredPin(storageKey: string, value: string) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  if (value) {
+    window.sessionStorage.setItem(storageKey, value)
+  } else {
+    window.sessionStorage.removeItem(storageKey)
+  }
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -191,14 +250,52 @@ function HomePage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [createdLinks, setCreatedLinks] = useState<CreatedLinks | null>(null)
+  const [excludedDates, setExcludedDates] = useState<Set<string>>(new Set())
+  const [loadingExcludedDates, setLoadingExcludedDates] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+
+    void (async () => {
+      if (!startDate || !endDate || endDate < startDate) {
+        setExcludedDates(new Set())
+        return
+      }
+
+      setLoadingExcludedDates(true)
+
+      try {
+        const nextExcludedDates = await loadExcludedHolidayDates(startDate, endDate)
+
+        if (!cancelled) {
+          setExcludedDates(nextExcludedDates)
+        }
+      } catch (loadError) {
+        if (!cancelled) {
+          const message =
+            loadError instanceof Error ? loadError.message : '공휴일 정보를 불러오지 못했습니다.'
+          setError(message)
+          setExcludedDates(new Set())
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingExcludedDates(false)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [endDate, startDate])
 
   const slotPreview = useMemo(
-    () => buildHourlySlots(startDate, endDate).slice(0, 6),
-    [endDate, startDate],
+    () => buildHourlySlotsExcludingDates(startDate, endDate, excludedDates).slice(0, 6),
+    [endDate, excludedDates, startDate],
   )
   const totalSlotCount = useMemo(
-    () => buildHourlySlots(startDate, endDate).length,
-    [endDate, startDate],
+    () => buildHourlySlotsExcludingDates(startDate, endDate, excludedDates).length,
+    [endDate, excludedDates, startDate],
   )
 
   const updateParticipant = (index: number, value: string) => {
@@ -236,9 +333,14 @@ function HomePage() {
       return
     }
 
-    const slotTemplates = buildHourlySlots(startDate, endDate)
+    if (loadingExcludedDates) {
+      setError('휴일 정보를 확인하는 중입니다. 잠시 후 다시 시도해 주세요.')
+      return
+    }
+
+    const slotTemplates = buildHourlySlotsExcludingDates(startDate, endDate, excludedDates)
     if (slotTemplates.length === 0) {
-      setError('선택된 기간에 생성할 수 있는 시간이 없습니다.')
+      setError('선택된 기간에 생성할 수 있는 평일 근무 시간이 없습니다.')
       return
     }
 
@@ -246,11 +348,13 @@ function HomePage() {
 
     try {
       const managementCode = randomCode()
+      const managementPin = randomPin()
       const eventPayload: EventInsert = {
         title: title.trim(),
         start_date: startDate,
         end_date: endDate,
         management_code: managementCode,
+        management_pin: managementPin,
       }
 
       const { data: insertedEvent, error: eventError } = await supabase
@@ -266,6 +370,7 @@ function HomePage() {
       const participantPayload: ParticipantInsert[] = trimmedParticipants.map((name) => ({
         event_id: insertedEvent.id,
         invite_code: randomCode(),
+        access_pin: randomPin(),
         name,
       }))
 
@@ -293,9 +398,11 @@ function HomePage() {
       const baseUrl = getBaseUrl()
       setCreatedLinks({
         managementLink: `${baseUrl}/manage/${managementCode}`,
+        managementPin,
         participantLinks: insertedParticipants.map((participant) => ({
           name: participant.name,
           link: `${baseUrl}/invite/${participant.invite_code}`,
+          pin: participant.access_pin ?? '미설정',
         })),
       })
     } catch (submitError) {
@@ -404,18 +511,22 @@ function HomePage() {
 
           <div className="preview-box">
             <h3>자동 생성 예시</h3>
-            <p>{formatDateRange(startDate, endDate)} 기준으로 아래와 같은 시간이 만들어집니다.</p>
+            <p>
+              {formatDateRange(startDate, endDate)} 기준으로 주말과 대한민국 공휴일을 제외한
+              시간만 만들어집니다.
+            </p>
             <div className="preview-slots">
               {slotPreview.map((slot) => (
                 <span key={getSlotKey(slot)}>{formatSlotLabel(slot)}</span>
               ))}
               {totalSlotCount > slotPreview.length ? <span>...</span> : null}
             </div>
+            {loadingExcludedDates ? <p className="helper-text">공휴일 정보를 확인하고 있습니다.</p> : null}
           </div>
 
           {error ? <p className="error-text">{error}</p> : null}
 
-          <button className="primary-button" type="submit" disabled={isSubmitting}>
+          <button className="primary-button" type="submit" disabled={isSubmitting || loadingExcludedDates}>
             {isSubmitting ? '생성 중...' : '면접 일정 생성'}
           </button>
         </form>
@@ -433,13 +544,17 @@ function HomePage() {
               <div className="link-group">
                 <h3>인사 담당자 관리 링크</h3>
                 <a href={createdLinks.managementLink}>{createdLinks.managementLink}</a>
+                <div className="pin-badge">접속 PIN {createdLinks.managementPin}</div>
               </div>
 
               <div className="link-group">
                 <h3>면접관 초대 링크</h3>
                 {createdLinks.participantLinks.map((item) => (
                   <div className="invite-link-row" key={item.link}>
-                    <strong>{item.name}</strong>
+                    <div className="invite-link-meta">
+                      <strong>{item.name}</strong>
+                      <div className="pin-badge">접속 PIN {item.pin}</div>
+                    </div>
                     <a href={item.link}>{item.link}</a>
                   </div>
                 ))}
@@ -460,9 +575,13 @@ function HomePage() {
 function ManagePage() {
   const { managementCode = '' } = useParams()
   const [bundle, setBundle] = useState<EventBundle | null>(null)
+  const [eventTitle, setEventTitle] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [savingSlotId, setSavingSlotId] = useState<string | null>(null)
+  const [requiresPin, setRequiresPin] = useState(false)
+  const [pinInput, setPinInput] = useState('')
+  const [activePin, setActivePin] = useState('')
 
   useEffect(() => {
     void (async () => {
@@ -470,7 +589,22 @@ function ManagePage() {
       setError(null)
 
       try {
-        setBundle(await fetchManageBundle(managementCode))
+        const accessInfo = await fetchManageAccess(managementCode)
+        const storedPin = getStoredPin(`manage:${managementCode}`)
+
+        setEventTitle(accessInfo.title)
+        setRequiresPin(Boolean(accessInfo.management_pin))
+        setPinInput(storedPin)
+
+        if (!accessInfo.management_pin) {
+          setBundle(await fetchManageBundle(managementCode))
+          setActivePin('')
+        } else if (storedPin) {
+          setBundle(await fetchManageBundle(managementCode, storedPin))
+          setActivePin(storedPin)
+        } else {
+          setBundle(null)
+        }
       } catch (loadError) {
         const message =
           loadError instanceof Error ? loadError.message : '관리 페이지를 불러오지 못했습니다.'
@@ -537,16 +671,42 @@ function ManagePage() {
     [bundle?.slots],
   )
 
-  const loadBundle = async () => {
+  const loadBundle = async (pinOverride?: string) => {
     setLoading(true)
     setError(null)
 
     try {
-      setBundle(await fetchManageBundle(managementCode))
+      setBundle(await fetchManageBundle(managementCode, pinOverride ?? activePin))
     } catch (loadError) {
       const message =
         loadError instanceof Error ? loadError.message : '관리 페이지를 불러오지 못했습니다.'
       setError(message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleUnlock = async (submitEvent: FormEvent<HTMLFormElement>) => {
+    submitEvent.preventDefault()
+
+    if (!/^\d{4}$/.test(pinInput)) {
+      setError('4자리 숫자 PIN을 입력해 주세요.')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const nextBundle = await fetchManageBundle(managementCode, pinInput)
+      setBundle(nextBundle)
+      setActivePin(pinInput)
+      setStoredPin(`manage:${managementCode}`, pinInput)
+    } catch (loadError) {
+      const message =
+        loadError instanceof Error ? loadError.message : 'PIN 확인 중 오류가 발생했습니다.'
+      setError(message === '일정을 찾을 수 없습니다.' ? 'PIN이 올바르지 않습니다.' : message)
+      setStoredPin(`manage:${managementCode}`, '')
     } finally {
       setLoading(false)
     }
@@ -568,7 +728,7 @@ function ManagePage() {
     if (updateError) {
       setError(updateError.message)
     } else {
-      await loadBundle()
+      await loadBundle(activePin)
     }
 
     setSavingSlotId(null)
@@ -576,6 +736,19 @@ function ManagePage() {
 
   if (loading) {
     return <PageState title="불러오는 중..." description="면접 일정 정보를 가져오고 있습니다." />
+  }
+
+  if (requiresPin && !bundle) {
+    return (
+      <PinGate
+        title={eventTitle || '관리자 링크 보호'}
+        description="관리 링크는 4자리 PIN을 입력해야 열립니다."
+        pin={pinInput}
+        onPinChange={setPinInput}
+        onSubmit={handleUnlock}
+        error={error}
+      />
+    )
   }
 
   if (error || !bundle) {
@@ -623,7 +796,7 @@ function ManagePage() {
                 </div>
 
                 <div className="calendar-slot-list">
-                  {group.items.map((slot) => {
+                  {group.items.map((slot, index) => {
                     const matchedIds = availabilityBySlot.get(slot.id) ?? new Set<string>()
                     const participantNames = bundle.participants
                       .filter((participant) => matchedIds.has(participant.id))
@@ -637,22 +810,27 @@ function ManagePage() {
                         className={`calendar-slot manage-slot${isCommon ? ' common' : ''}${isPriority ? ' priority' : ''}${isFinal ? ' final' : ''}`}
                         key={slot.id}
                       >
-                        <div className="calendar-slot-top">
-                          <strong>
-                            {slot.start_time} - {slot.end_time}
-                          </strong>
-                          <span>
-                            {matchedIds.size}/{bundle.participants.length}명 가능
-                          </span>
+                        <div className="slot-order-badge">{String(index + 1).padStart(2, '0')}</div>
+                        <div className="slot-main">
+                          <div className="slot-primary-line">
+                            <strong className="slot-time">
+                              {formatTimeValue(slot.start_time)} - {formatTimeValue(slot.end_time)}
+                            </strong>
+                            <span className="slot-summary">
+                              {matchedIds.size}/{bundle.participants.length}명 가능
+                            </span>
+                          </div>
+                          <div className="slot-secondary-line">
+                            <div className="name-tags inline-tags">
+                              {participantNames.length > 0 ? (
+                                participantNames.map((name) => <span key={name}>{name}</span>)
+                              ) : (
+                                <span>아직 응답 없음</span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                        <div className="name-tags">
-                          {participantNames.length > 0 ? (
-                            participantNames.map((name) => <span key={name}>{name}</span>)
-                          ) : (
-                            <span>아직 응답 없음</span>
-                          )}
-                        </div>
-                        <div className="slot-actions">
+                        <div className="slot-actions slot-actions-inline">
                           <div className="pill-row">
                             {isPriority ? <span className="pill danger">1순위 겹침</span> : null}
                             {isCommon ? <span className="pill success">모두 가능</span> : null}
@@ -699,11 +877,15 @@ function InvitePage() {
   const { inviteCode = '' } = useParams()
   const [bundle, setBundle] = useState<EventBundle | null>(null)
   const [participant, setParticipant] = useState<ParticipantRow | null>(null)
+  const [participantName, setParticipantName] = useState('')
   const [selectedSlotIds, setSelectedSlotIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [requiresPin, setRequiresPin] = useState(false)
+  const [pinInput, setPinInput] = useState('')
+  const [activePin, setActivePin] = useState('')
 
   useEffect(() => {
     void (async () => {
@@ -712,16 +894,41 @@ function InvitePage() {
       setSuccessMessage(null)
 
       try {
-        const result = await fetchInviteBundle(inviteCode)
-        const currentSelections = new Set(
-          result.bundle.availability
-            .filter((row) => row.participant_id === result.participant.id)
-            .map((row) => row.slot_id),
-        )
+        const accessInfo = await fetchInviteAccess(inviteCode)
+        const storedPin = getStoredPin(`invite:${inviteCode}`)
 
-        setParticipant(result.participant)
-        setSelectedSlotIds(currentSelections)
-        setBundle(result.bundle)
+        setParticipantName(accessInfo.name)
+        setRequiresPin(Boolean(accessInfo.access_pin))
+        setPinInput(storedPin)
+
+        if (!accessInfo.access_pin) {
+          const result = await fetchInviteBundle(inviteCode)
+          const currentSelections = new Set(
+            result.bundle.availability
+              .filter((row) => row.participant_id === result.participant.id)
+              .map((row) => row.slot_id),
+          )
+
+          setParticipant(result.participant)
+          setSelectedSlotIds(currentSelections)
+          setBundle(result.bundle)
+          setActivePin('')
+        } else if (storedPin) {
+          const result = await fetchInviteBundle(inviteCode, storedPin)
+          const currentSelections = new Set(
+            result.bundle.availability
+              .filter((row) => row.participant_id === result.participant.id)
+              .map((row) => row.slot_id),
+          )
+
+          setParticipant(result.participant)
+          setSelectedSlotIds(currentSelections)
+          setBundle(result.bundle)
+          setActivePin(storedPin)
+        } else {
+          setParticipant(null)
+          setBundle(null)
+        }
       } catch (loadError) {
         const message =
           loadError instanceof Error ? loadError.message : '초대 페이지를 불러오지 못했습니다.'
@@ -732,85 +939,61 @@ function InvitePage() {
     })()
   }, [inviteCode])
 
-  const load = async () => {
+  const load = async (pinOverride?: string) => {
     setLoading(true)
     setError(null)
     setSuccessMessage(null)
 
     try {
-      const { data: participantRow, error: participantError } = await supabase
-        .from('interview_participants')
-        .select('*')
-        .eq('invite_code', inviteCode)
-        .single()
-
-      if (participantError || !participantRow) {
-        throw participantError ?? new Error('초대 링크를 찾을 수 없습니다.')
-      }
-
-      const [{ data: eventRow, error: eventError }, { data: slots, error: slotError }] =
-        await Promise.all([
-          supabase
-            .from('interview_events')
-            .select('*')
-            .eq('id', participantRow.event_id)
-            .single(),
-          supabase
-            .from('interview_slots')
-            .select('*')
-            .eq('event_id', participantRow.event_id)
-            .order('slot_date', { ascending: true })
-            .order('start_time', { ascending: true }),
-        ])
-
-      if (eventError || !eventRow) {
-        throw eventError ?? new Error('일정 정보를 불러오지 못했습니다.')
-      }
-
-      if (slotError) {
-        throw slotError
-      }
-
-      const { data: participants, error: participantsError } = await supabase
-        .from('interview_participants')
-        .select('*')
-        .eq('event_id', participantRow.event_id)
-        .order('created_at', { ascending: true })
-
-      if (participantsError) {
-        throw participantsError
-      }
-
-      const participantIds = (participants ?? []).map((item) => item.id)
-      const { data: availability, error: availabilityError } = participantIds.length
-        ? await supabase
-            .from('participant_availability')
-            .select('*')
-            .in('participant_id', participantIds)
-        : { data: [], error: null }
-
-      if (availabilityError) {
-        throw availabilityError
-      }
+      const result = await fetchInviteBundle(inviteCode, pinOverride ?? activePin)
 
       const currentSelections = new Set(
-        (availability ?? [])
-          .filter((row) => row.participant_id === participantRow.id)
+        result.bundle.availability
+          .filter((row) => row.participant_id === result.participant.id)
           .map((row) => row.slot_id),
       )
 
-      setParticipant(participantRow)
+      setParticipant(result.participant)
       setSelectedSlotIds(currentSelections)
-      setBundle({
-        event: eventRow,
-        participants: participants ?? [],
-        slots: slots ?? [],
-        availability: availability ?? [],
-      })
+      setBundle(result.bundle)
     } catch (loadError) {
       const message =
         loadError instanceof Error ? loadError.message : '초대 페이지를 불러오지 못했습니다.'
       setError(message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleUnlock = async (submitEvent: FormEvent<HTMLFormElement>) => {
+    submitEvent.preventDefault()
+
+    if (!/^\d{4}$/.test(pinInput)) {
+      setError('4자리 숫자 PIN을 입력해 주세요.')
+      return
+    }
+
+    setLoading(true)
+    setError(null)
+
+    try {
+      const result = await fetchInviteBundle(inviteCode, pinInput)
+      const currentSelections = new Set(
+        result.bundle.availability
+          .filter((row) => row.participant_id === result.participant.id)
+          .map((row) => row.slot_id),
+      )
+
+      setParticipant(result.participant)
+      setSelectedSlotIds(currentSelections)
+      setBundle(result.bundle)
+      setActivePin(pinInput)
+      setStoredPin(`invite:${inviteCode}`, pinInput)
+    } catch (loadError) {
+      const message =
+        loadError instanceof Error ? loadError.message : 'PIN 확인 중 오류가 발생했습니다.'
+      setError(message === '초대 링크를 찾을 수 없습니다.' ? 'PIN이 올바르지 않습니다.' : message)
+      setStoredPin(`invite:${inviteCode}`, '')
     } finally {
       setLoading(false)
     }
@@ -980,12 +1163,25 @@ function InvitePage() {
     }
 
     setSuccessMessage('가능한 시간이 저장되었습니다.')
-    await load()
+    await load(activePin)
     setSaving(false)
   }
 
   if (loading) {
     return <PageState title="불러오는 중..." description="초대 정보를 가져오고 있습니다." />
+  }
+
+  if (requiresPin && (!bundle || !participant)) {
+    return (
+      <PinGate
+        title={participantName ? `${participantName}님 초대 링크` : '면접관 초대 링크 보호'}
+        description="이 초대 링크는 4자리 PIN을 입력해야 열립니다."
+        pin={pinInput}
+        onPinChange={setPinInput}
+        onSubmit={handleUnlock}
+        error={error}
+      />
+    )
   }
 
   if (error || !bundle || !participant) {
@@ -1070,7 +1266,7 @@ function InvitePage() {
                   </div>
 
                   <div className="calendar-slot-list">
-                    {group.items.map((slot) => {
+                    {group.items.map((slot, index) => {
                       const checked = selectedSlotIds.has(slot.id)
                       const previousOverlapCount = previousOverlapBySlot.get(slot.id)?.size ?? 0
                       const projectedOverlapCount = previousOverlapCount + (checked ? 1 : 0)
@@ -1079,31 +1275,36 @@ function InvitePage() {
                           className={`calendar-slot select-slot${checked ? ' checked' : ''}`}
                           key={slot.id}
                         >
+                          <div className="slot-order-badge">{String(index + 1).padStart(2, '0')}</div>
                           <input
                             checked={checked}
                             type="checkbox"
                             onChange={() => toggleSlot(slot.id)}
                           />
-                          <div className="calendar-slot-top">
-                            <strong>
-                              {slot.start_time} - {slot.end_time}
-                            </strong>
-                            <span>{checked ? '선택됨' : '선택 가능'}</span>
-                          </div>
-                          {participantOrder > 0 ? (
-                            <div className="slot-overlap-guide">
-                              <div className="overlap-dots" aria-hidden="true">
-                                {Array.from({ length: projectedOverlapCount }).map((_, index) => (
-                                  <span className="overlap-dot" key={index} />
-                                ))}
-                              </div>
-                              <p>
-                                {checked
-                                  ? `${projectedOverlapCount}명 교집합 후보`
-                                  : `앞선 면접관 ${previousOverlapCount}명이 모두 고른 시간`}
-                              </p>
+                          <div className="slot-main">
+                            <div className="slot-primary-line">
+                              <strong className="slot-time">
+                                {formatTimeValue(slot.start_time)} - {formatTimeValue(slot.end_time)}
+                              </strong>
+                              <span className="slot-summary">{checked ? '선택됨' : '선택 가능'}</span>
                             </div>
-                          ) : null}
+                            <div className="slot-secondary-line">
+                              {participantOrder > 0 ? (
+                                <div className="slot-overlap-guide slot-overlap-inline">
+                                  <div className="overlap-dots" aria-hidden="true">
+                                    {Array.from({ length: projectedOverlapCount }).map((_, dotIndex) => (
+                                      <span className="overlap-dot" key={dotIndex} />
+                                    ))}
+                                  </div>
+                                  <p>
+                                    {checked
+                                      ? `${projectedOverlapCount}명 교집합 후보`
+                                      : `앞선 면접관 ${previousOverlapCount}명이 모두 고른 시간`}
+                                  </p>
+                                </div>
+                              ) : null}
+                            </div>
+                          </div>
                         </label>
                       )
                     })}
@@ -1133,6 +1334,47 @@ function InvitePage() {
           </div>
         </div>
       </section>
+    </main>
+  )
+}
+
+function PinGate({
+  title,
+  description,
+  pin,
+  onPinChange,
+  onSubmit,
+  error,
+}: {
+  title: string
+  description: string
+  pin: string
+  onPinChange: (value: string) => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  error: string | null
+}) {
+  return (
+    <main className="page-shell state-page">
+      <form className="card state-card pin-card" onSubmit={onSubmit}>
+        <div className="eyebrow">PIN 보호 링크</div>
+        <h1>{title}</h1>
+        <p>{description}</p>
+        <label className="field pin-field">
+          <span>4자리 PIN</span>
+          <input
+            inputMode="numeric"
+            maxLength={4}
+            pattern="\d{4}"
+            placeholder="예: 0247"
+            value={pin}
+            onChange={(event) => onPinChange(event.target.value.replace(/\D/g, '').slice(0, 4))}
+          />
+        </label>
+        {error ? <p className="error-text">{error}</p> : null}
+        <button className="primary-button" type="submit">
+          확인하고 입장
+        </button>
+      </form>
     </main>
   )
 }

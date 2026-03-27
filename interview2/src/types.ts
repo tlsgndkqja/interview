@@ -6,6 +6,7 @@ export type EventRow = {
   core_start: string
   core_end: string
   management_code: string
+  management_pin: string | null
   finalized_slot_id: string | null
   created_at: string
 }
@@ -15,6 +16,7 @@ export type EventInsert = {
   start_date: string
   end_date: string
   management_code: string
+  management_pin: string
 }
 
 export type ParticipantRow = {
@@ -22,6 +24,7 @@ export type ParticipantRow = {
   event_id: string
   name: string
   invite_code: string
+  access_pin: string | null
   created_at: string
 }
 
@@ -29,6 +32,7 @@ export type ParticipantInsert = {
   event_id: string
   name: string
   invite_code: string
+  access_pin: string
 }
 
 export type SlotRow = {

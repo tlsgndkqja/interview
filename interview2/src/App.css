@@ -124,7 +124,8 @@ p {
 .slot-card p,
 .detail-header p,
 .finalize-bar p,
-.notice-card p {
+.notice-card p,
+.helper-text {
   color: var(--text-muted);
 }
 
@@ -364,6 +365,25 @@ p {
   border-top: 1px solid rgba(133, 89, 65, 0.12);
 }
 
+.invite-link-meta {
+  display: grid;
+  gap: 8px;
+}
+
+.pin-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(255, 240, 228, 0.96);
+  border: 1px solid rgba(198, 93, 61, 0.16);
+  color: var(--accent-strong);
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
 .invite-link-row:first-of-type {
   border-top: none;
 }
@@ -443,48 +463,110 @@ p {
 
 .calendar-slot-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .calendar-slot {
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 22px;
-  border: 1px solid rgba(133, 89, 65, 0.14);
-  background: rgba(255, 255, 255, 0.9);
-}
-
-.calendar-slot-top {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 14px;
+  min-height: 82px;
+  padding: 14px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(15, 34, 67, 0.08);
+  background: linear-gradient(180deg, #143764 0%, #0f2c4f 100%);
+  color: #f8fbff;
+  overflow: hidden;
+  white-space: nowrap;
+  box-shadow: 0 16px 26px rgba(11, 31, 58, 0.16);
 }
 
-.calendar-slot-top strong {
+.slot-order-badge {
+  flex: 0 0 42px;
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
   font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
 }
 
-.calendar-slot-top span {
-  color: var(--text-muted);
-  font-size: 0.9rem;
+.slot-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 8px;
+}
+
+.slot-primary-line,
+.slot-secondary-line {
+  display: grid;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.slot-primary-line {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.slot-time {
+  min-width: 0;
+  font-size: 1.08rem;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot-summary {
+  min-width: 0;
+  color: rgba(232, 242, 255, 0.86);
+  font-size: 0.84rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slot-summary.muted-inline {
+  color: rgba(232, 242, 255, 0.7);
+}
+
+.slot-date-chip {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #d5e7ff;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.slot-secondary-line {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .manage-slot.common {
-  border-color: rgba(22, 101, 52, 0.22);
-  background: rgba(245, 252, 245, 0.96);
+  border-color: rgba(66, 182, 115, 0.2);
+  background: linear-gradient(180deg, #143764 0%, #133b46 100%);
 }
 
 .manage-slot.priority {
-  border-color: rgba(220, 38, 38, 0.35);
-  background: rgba(255, 243, 240, 0.98);
-  box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.1);
+  border-color: rgba(255, 186, 73, 0.22);
+  background: linear-gradient(180deg, #143764 0%, #4a2d1b 100%);
+  box-shadow: 0 16px 28px rgba(38, 19, 12, 0.24);
 }
 
 .manage-slot.final {
-  border-color: rgba(15, 118, 110, 0.36);
-  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.12);
+  border-color: rgba(255, 228, 157, 0.34);
+  box-shadow: inset 0 0 0 1px rgba(255, 226, 120, 0.22);
 }
 
 .select-slot {
@@ -492,9 +574,9 @@ p {
 }
 
 .select-slot.checked {
-  border-color: rgba(198, 93, 61, 0.34);
-  background: linear-gradient(180deg, rgba(255, 239, 229, 0.95) 0%, rgba(255, 247, 241, 0.94) 100%);
-  box-shadow: 0 14px 24px rgba(198, 93, 61, 0.1);
+  border-color: rgba(255, 195, 108, 0.26);
+  background: linear-gradient(180deg, #1b4a84 0%, #133a6a 100%);
+  box-shadow: 0 18px 28px rgba(17, 44, 77, 0.28);
 }
 
 .select-slot input {
@@ -505,8 +587,10 @@ p {
 
 .pill-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .slot-card {
@@ -527,9 +611,17 @@ p {
 }
 
 .slot-actions {
-  display: grid;
-  justify-items: end;
-  gap: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.slot-actions-inline .primary-button {
+  white-space: nowrap;
+  padding-inline: 16px;
 }
 
 .finalize-bar {
@@ -585,24 +677,52 @@ p {
   padding-top: 2px;
 }
 
+.slot-overlap-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
 .slot-overlap-guide p {
-  color: #b91c1c;
-  font-size: 0.92rem;
+  color: #ffd2ca;
+  font-size: 0.8rem;
   font-weight: 700;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .overlap-dots {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
 .overlap-dot {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 999px;
   background: #ef4444;
-  box-shadow: 0 0 0 3px rgba(255, 234, 228, 0.95);
+  box-shadow: 0 0 0 2px rgba(255, 234, 228, 0.2);
+}
+
+.inline-tags {
+  flex-wrap: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.inline-tags span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #eaf3ff;
 }
 
 .filtered-empty-state {
@@ -636,6 +756,21 @@ p {
   gap: 18px;
 }
 
+.pin-card {
+  max-width: 480px;
+}
+
+.pin-field {
+  text-align: left;
+}
+
+.pin-field input {
+  text-align: center;
+  letter-spacing: 0.32em;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
 @media (max-width: 900px) {
   .content-grid,
   .field-grid,
@@ -659,13 +794,8 @@ p {
 
   .slot-actions {
     width: 100%;
-    justify-items: stretch;
-  }
-
-  .calendar-day-head,
-  .calendar-slot-top {
-    align-items: flex-start;
-    flex-direction: column;
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .page-shell {
@@ -677,5 +807,23 @@ p {
   .card {
     padding: 24px;
     border-radius: 26px;
+  }
+
+  .calendar-slot {
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+
+  .slot-main,
+  .slot-primary-line,
+  .slot-secondary-line {
+    width: 100%;
+  }
+
+  .slot-primary-line,
+  .slot-secondary-line,
+  .slot-overlap-inline {
+    display: flex;
+    flex-wrap: wrap;
   }
 }
