@@ -841,17 +841,47 @@ function InvitePage() {
       return -1
     }
 
-    return bundle.participants.findIndex((item) => item.id === participant.id)
+    const firstResponseByParticipant = new Map<string, string>()
+
+    bundle.availability.forEach((row) => {
+      const current = firstResponseByParticipant.get(row.participant_id)
+
+      if (!current || row.created_at < current) {
+        firstResponseByParticipant.set(row.participant_id, row.created_at)
+      }
+    })
+
+    const responderIds = Array.from(firstResponseByParticipant.entries())
+      .sort((left, right) => left[1].localeCompare(right[1]))
+      .map(([participantId]) => participantId)
+
+    const currentIndex = responderIds.indexOf(participant.id)
+    return currentIndex >= 0 ? currentIndex : responderIds.length
   }, [bundle, participant])
 
   const previousParticipantIds = useMemo(
-    () =>
-      new Set(
-        bundle?.participants
-          .slice(0, Math.max(participantOrder, 0))
-          .map((item) => item.id) ?? [],
-      ),
-    [bundle?.participants, participantOrder],
+    () => {
+      if (!bundle) {
+        return new Set<string>()
+      }
+
+      const firstResponseByParticipant = new Map<string, string>()
+
+      bundle.availability.forEach((row) => {
+        const current = firstResponseByParticipant.get(row.participant_id)
+
+        if (!current || row.created_at < current) {
+          firstResponseByParticipant.set(row.participant_id, row.created_at)
+        }
+      })
+
+      const responderIds = Array.from(firstResponseByParticipant.entries())
+        .sort((left, right) => left[1].localeCompare(right[1]))
+        .map(([participantId]) => participantId)
+
+      return new Set(responderIds.slice(0, Math.max(participantOrder, 0)))
+    },
+    [bundle, participantOrder],
   )
 
   const previousOverlapBySlot = useMemo(() => {
@@ -973,10 +1003,6 @@ function InvitePage() {
 
   return (
     <main className="page-shell inner-page">
-      <div className="page-topbar">
-        <Link to="/">새 일정 만들기</Link>
-      </div>
-
       <section className="card detail-header">
         <div>
           <div className="eyebrow">면접관 응답 화면</div>
