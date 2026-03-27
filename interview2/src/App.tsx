@@ -828,6 +828,18 @@ function InvitePage() {
     })
   }
 
+  const selectAllSlots = () => {
+    if (!bundle) {
+      return
+    }
+
+    setSelectedSlotIds(new Set(bundle.slots.map((slot) => slot.id)))
+  }
+
+  const clearAllSlots = () => {
+    setSelectedSlotIds(new Set())
+  }
+
   const saveAvailability = async () => {
     if (!participant) {
       return
@@ -919,6 +931,24 @@ function InvitePage() {
             <div>
               <h2>가능 시간 선택</h2>
               <p>가능한 시간대만 체크한 뒤 저장해 주세요.</p>
+            </div>
+            <div className="bulk-action-row">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={selectAllSlots}
+                disabled={bundle.slots.length === 0 || selectedSlotIds.size === bundle.slots.length}
+              >
+                전체 선택
+              </button>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={clearAllSlots}
+                disabled={selectedSlotIds.size === 0}
+              >
+                전체 해제
+              </button>
             </div>
           </div>
 

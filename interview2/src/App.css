@@ -135,6 +135,13 @@ p {
   margin-bottom: 24px;
 }
 
+.bulk-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .card-head h2,
 .notice-card h2 {
   font-size: 1.4rem;
@@ -548,6 +555,11 @@ p {
   .invite-link-row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .bulk-action-row {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .slot-actions {
