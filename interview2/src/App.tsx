@@ -829,16 +829,86 @@ function InvitePage() {
   }
 
   const selectAllSlots = () => {
-    if (!bundle) {
-      return
-    }
-
-    setSelectedSlotIds(new Set(bundle.slots.map((slot) => slot.id)))
+    setSelectedSlotIds(new Set(visibleSlots.map((slot) => slot.id)))
   }
 
   const clearAllSlots = () => {
     setSelectedSlotIds(new Set())
   }
+
+  const participantOrder = useMemo(() => {
+    if (!bundle || !participant) {
+      return -1
+    }
+
+    return bundle.participants.findIndex((item) => item.id === participant.id)
+  }, [bundle, participant])
+
+  const previousParticipantIds = useMemo(
+    () =>
+      new Set(
+        bundle?.participants
+          .slice(0, Math.max(participantOrder, 0))
+          .map((item) => item.id) ?? [],
+      ),
+    [bundle?.participants, participantOrder],
+  )
+
+  const previousOverlapBySlot = useMemo(() => {
+    const map = new Map<string, Set<string>>()
+
+    bundle?.availability.forEach((row) => {
+      if (!previousParticipantIds.has(row.participant_id)) {
+        return
+      }
+
+      const current = map.get(row.slot_id) ?? new Set<string>()
+      current.add(row.participant_id)
+      map.set(row.slot_id, current)
+    })
+
+    return map
+  }, [bundle?.availability, previousParticipantIds])
+
+  const visibleSlots = useMemo(() => {
+    if (!bundle) {
+      return []
+    }
+
+    if (participantOrder <= 0) {
+      return bundle.slots
+    }
+
+    return bundle.slots.filter(
+      (slot) => (previousOverlapBySlot.get(slot.id)?.size ?? 0) === participantOrder,
+    )
+  }, [bundle, participantOrder, previousOverlapBySlot])
+
+  const visibleSlotIds = useMemo(
+    () => new Set(visibleSlots.map((slot) => slot.id)),
+    [visibleSlots],
+  )
+
+  const visibleSelectedCount = useMemo(
+    () => Array.from(selectedSlotIds).filter((slotId) => visibleSlotIds.has(slotId)).length,
+    [selectedSlotIds, visibleSlotIds],
+  )
+
+  useEffect(() => {
+    setSelectedSlotIds((current) => {
+      if (participantOrder <= 0) {
+        return current
+      }
+
+      const filtered = Array.from(current).filter((slotId) => visibleSlotIds.has(slotId))
+
+      if (filtered.length === current.size) {
+        return current
+      }
+
+      return new Set(filtered)
+    })
+  }, [participantOrder, visibleSlotIds])
 
   const saveAvailability = async () => {
     if (!participant) {
@@ -860,8 +930,10 @@ function InvitePage() {
       return
     }
 
-    if (selectedSlotIds.size > 0) {
-      const insertRows = Array.from(selectedSlotIds).map((slotId) => ({
+    const slotIdsToSave = Array.from(selectedSlotIds).filter((slotId) => visibleSlotIds.has(slotId))
+
+    if (slotIdsToSave.length > 0) {
+      const insertRows = slotIdsToSave.map((slotId) => ({
         participant_id: participant.id,
         slot_id: slotId,
       }))
@@ -895,25 +967,9 @@ function InvitePage() {
     )
   }
 
-  const participantOrder = bundle.participants.findIndex((item) => item.id === participant.id)
-  const previousParticipantIds = new Set(
-    bundle.participants.slice(0, Math.max(participantOrder, 0)).map((item) => item.id),
-  )
-  const previousOverlapBySlot = new Map<string, Set<string>>()
-
-  bundle.availability.forEach((row) => {
-    if (!previousParticipantIds.has(row.participant_id)) {
-      return
-    }
-
-    const current = previousOverlapBySlot.get(row.slot_id) ?? new Set<string>()
-    current.add(row.participant_id)
-    previousOverlapBySlot.set(row.slot_id, current)
-  })
-
   const finalizedSlot =
     bundle.slots.find((slot) => slot.id === bundle.event.finalized_slot_id) ?? null
-  const groupedInviteSlots = groupSlotsByDate(bundle.slots)
+  const groupedInviteSlots = groupSlotsByDate(visibleSlots)
 
   return (
     <main className="page-shell inner-page">
@@ -930,7 +986,7 @@ function InvitePage() {
           </p>
         </div>
         <div className="summary-badges">
-          <span className="chip">{selectedSlotIds.size}개 선택됨</span>
+          <span className="chip">{visibleSelectedCount}개 선택됨</span>
         </div>
       </section>
 
@@ -943,10 +999,10 @@ function InvitePage() {
 
       {participantOrder > 0 ? (
         <section className="card overlap-guide-card">
-          <h2>교집합 가이드</h2>
+          <h2>선순위 기준 시간대</h2>
           <p>
-            빨간 동그라미는 앞선 면접관들이 이미 선택한 시간입니다. 동그라미가 많은 시간대를
-            고를수록 교집합을 더 빠르게 만들 수 있습니다.
+            지금 보이는 시간은 앞선 면접관들이 모두 선택한 슬롯만 추린 결과입니다. 이 안에서만
+            선택하면 교집합을 빠르게 확정할 수 있습니다.
           </p>
         </section>
       ) : null}
@@ -963,7 +1019,7 @@ function InvitePage() {
                 className="secondary-button"
                 type="button"
                 onClick={selectAllSlots}
-                disabled={bundle.slots.length === 0 || selectedSlotIds.size === bundle.slots.length}
+                disabled={visibleSlots.length === 0 || visibleSelectedCount === visibleSlots.length}
               >
                 전체 선택
               </button>
@@ -971,63 +1027,70 @@ function InvitePage() {
                 className="ghost-button"
                 type="button"
                 onClick={clearAllSlots}
-                disabled={selectedSlotIds.size === 0}
+                disabled={visibleSelectedCount === 0}
               >
                 전체 해제
               </button>
             </div>
           </div>
 
-          <div className="calendar-grid">
-            {groupedInviteSlots.map((group) => (
-              <section className="calendar-day" key={group.date}>
-                <div className="calendar-day-head">
-                  <h3>{formatDate(group.date)}</h3>
-                  <span>{group.items.length}개 시간대</span>
-                </div>
+          {visibleSlots.length > 0 ? (
+            <div className="calendar-grid">
+              {groupedInviteSlots.map((group) => (
+                <section className="calendar-day" key={group.date}>
+                  <div className="calendar-day-head">
+                    <h3>{formatDate(group.date)}</h3>
+                    <span>{group.items.length}개 시간대</span>
+                  </div>
 
-                <div className="calendar-slot-list">
-                  {group.items.map((slot) => {
-                    const checked = selectedSlotIds.has(slot.id)
-                    const previousOverlapCount = previousOverlapBySlot.get(slot.id)?.size ?? 0
-                    const projectedOverlapCount = previousOverlapCount + (checked ? 1 : 0)
-                    return (
-                      <label
-                        className={`calendar-slot select-slot${checked ? ' checked' : ''}`}
-                        key={slot.id}
-                      >
-                        <input
-                          checked={checked}
-                          type="checkbox"
-                          onChange={() => toggleSlot(slot.id)}
-                        />
-                        <div className="calendar-slot-top">
-                          <strong>
-                            {slot.start_time} - {slot.end_time}
-                          </strong>
-                          <span>{checked ? '선택됨' : '선택 가능'}</span>
-                        </div>
-                        {previousOverlapCount > 0 || checked ? (
-                          <div className="slot-overlap-guide">
-                            <div className="overlap-dots" aria-hidden="true">
-                              {Array.from({ length: projectedOverlapCount }).map((_, index) => (
-                                <span className="overlap-dot" key={index} />
-                              ))}
-                            </div>
-                            <p>
-                              {checked
-                                ? `${projectedOverlapCount}명 교집합 후보`
-                                : `앞선 면접관 ${previousOverlapCount}명이 선택한 시간`}
-                            </p>
+                  <div className="calendar-slot-list">
+                    {group.items.map((slot) => {
+                      const checked = selectedSlotIds.has(slot.id)
+                      const previousOverlapCount = previousOverlapBySlot.get(slot.id)?.size ?? 0
+                      const projectedOverlapCount = previousOverlapCount + (checked ? 1 : 0)
+                      return (
+                        <label
+                          className={`calendar-slot select-slot${checked ? ' checked' : ''}`}
+                          key={slot.id}
+                        >
+                          <input
+                            checked={checked}
+                            type="checkbox"
+                            onChange={() => toggleSlot(slot.id)}
+                          />
+                          <div className="calendar-slot-top">
+                            <strong>
+                              {slot.start_time} - {slot.end_time}
+                            </strong>
+                            <span>{checked ? '선택됨' : '선택 가능'}</span>
                           </div>
-                        ) : null}
-                      </label>
-                    )
-                  })}
-                </div>
-              </section>
-            ))}
-          </div>
+                          {participantOrder > 0 ? (
+                            <div className="slot-overlap-guide">
+                              <div className="overlap-dots" aria-hidden="true">
+                                {Array.from({ length: projectedOverlapCount }).map((_, index) => (
+                                  <span className="overlap-dot" key={index} />
+                                ))}
+                              </div>
+                              <p>
+                                {checked
+                                  ? `${projectedOverlapCount}명 교집합 후보`
+                                  : `앞선 면접관 ${previousOverlapCount}명이 모두 고른 시간`}
+                              </p>
+                            </div>
+                          ) : null}
+                        </label>
+                      )
+                    })}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div className="filtered-empty-state">
+              <h3>앞선 면접관들의 공통 시간이 아직 없습니다.</h3>
+              <p>선순위 응답을 조정하거나 관리 화면에서 후보 시간을 다시 확인해 주세요.</p>
+            </div>
+          )}
 
           {error ? <p className="error-text">{error}</p> : null}
           {successMessage ? <p className="success-text">{successMessage}</p> : null}
