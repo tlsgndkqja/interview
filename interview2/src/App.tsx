@@ -895,6 +895,22 @@ function InvitePage() {
     )
   }
 
+  const participantOrder = bundle.participants.findIndex((item) => item.id === participant.id)
+  const previousParticipantIds = new Set(
+    bundle.participants.slice(0, Math.max(participantOrder, 0)).map((item) => item.id),
+  )
+  const previousOverlapBySlot = new Map<string, Set<string>>()
+
+  bundle.availability.forEach((row) => {
+    if (!previousParticipantIds.has(row.participant_id)) {
+      return
+    }
+
+    const current = previousOverlapBySlot.get(row.slot_id) ?? new Set<string>()
+    current.add(row.participant_id)
+    previousOverlapBySlot.set(row.slot_id, current)
+  })
+
   const finalizedSlot =
     bundle.slots.find((slot) => slot.id === bundle.event.finalized_slot_id) ?? null
   const groupedInviteSlots = groupSlotsByDate(bundle.slots)
@@ -922,6 +938,16 @@ function InvitePage() {
         <section className="card notice-card">
           <h2>최종 확정 시간</h2>
           <p>{formatSlotLabel(finalizedSlot)}로 일정이 확정되었습니다.</p>
+        </section>
+      ) : null}
+
+      {participantOrder > 0 ? (
+        <section className="card overlap-guide-card">
+          <h2>교집합 가이드</h2>
+          <p>
+            빨간 동그라미는 앞선 면접관들이 이미 선택한 시간입니다. 동그라미가 많은 시간대를
+            고를수록 교집합을 더 빠르게 만들 수 있습니다.
+          </p>
         </section>
       ) : null}
 
@@ -963,6 +989,8 @@ function InvitePage() {
                 <div className="calendar-slot-list">
                   {group.items.map((slot) => {
                     const checked = selectedSlotIds.has(slot.id)
+                    const previousOverlapCount = previousOverlapBySlot.get(slot.id)?.size ?? 0
+                    const projectedOverlapCount = previousOverlapCount + (checked ? 1 : 0)
                     return (
                       <label
                         className={`calendar-slot select-slot${checked ? ' checked' : ''}`}
@@ -979,6 +1007,20 @@ function InvitePage() {
                           </strong>
                           <span>{checked ? '선택됨' : '선택 가능'}</span>
                         </div>
+                        {previousOverlapCount > 0 || checked ? (
+                          <div className="slot-overlap-guide">
+                            <div className="overlap-dots" aria-hidden="true">
+                              {Array.from({ length: projectedOverlapCount }).map((_, index) => (
+                                <span className="overlap-dot" key={index} />
+                              ))}
+                            </div>
+                            <p>
+                              {checked
+                                ? `${projectedOverlapCount}명 교집합 후보`
+                                : `앞선 면접관 ${previousOverlapCount}명이 선택한 시간`}
+                            </p>
+                          </div>
+                        ) : null}
                       </label>
                     )
                   })}

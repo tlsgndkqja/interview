@@ -528,6 +528,38 @@ p {
   border-color: rgba(245, 158, 11, 0.25);
 }
 
+.overlap-guide-card {
+  margin-top: 20px;
+  background: rgba(254, 242, 242, 0.88);
+  border-color: rgba(239, 68, 68, 0.18);
+}
+
+.slot-overlap-guide {
+  display: grid;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.slot-overlap-guide p {
+  color: #b91c1c;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.overlap-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.overlap-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 0 0 0 3px rgba(254, 226, 226, 0.9);
+}
+
 .state-page {
   min-height: 100vh;
   display: grid;
