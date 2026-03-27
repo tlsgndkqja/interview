@@ -14,6 +14,7 @@ import type {
 } from './types'
 import {
   buildHourlySlots,
+  formatDate,
   formatDateRange,
   formatSlotLabel,
   getBaseUrl,
@@ -34,7 +35,23 @@ type CreatedLinks = {
   participantLinks: Array<{ name: string; link: string }>
 }
 
-const defaultParticipants = ['면접관 A', '면접관 B', '면접관 C']
+const defaultParticipants = ['', '', '']
+const participantExamples = ['예: 김민수', '예: 박서연', '예: 이도현']
+
+function groupSlotsByDate<T extends { slot_date: string }>(slots: T[]) {
+  const groups = new Map<string, T[]>()
+
+  slots.forEach((slot) => {
+    const current = groups.get(slot.slot_date) ?? []
+    current.push(slot)
+    groups.set(slot.slot_date, current)
+  })
+
+  return Array.from(groups.entries()).map(([date, items]) => ({
+    date,
+    items,
+  }))
+}
 
 async function fetchManageBundle(managementCode: string): Promise<EventBundle> {
   const { data: eventRow, error: eventError } = await supabase
@@ -191,7 +208,7 @@ function HomePage() {
   }
 
   const addParticipant = () => {
-    setParticipants((current) => [...current, `면접관 ${String.fromCharCode(65 + current.length)}`])
+    setParticipants((current) => [...current, ''])
   }
 
   const removeParticipant = (index: number) => {
@@ -361,11 +378,17 @@ function HomePage() {
 
             <div className="participant-list">
               {participants.map((participant, index) => (
-                <div className="participant-row" key={`${participant}-${index}`}>
-                  <input
-                    value={participant}
-                    onChange={(e) => updateParticipant(index, e.target.value)}
-                  />
+                <div className="participant-row" key={index}>
+                  <div className="participant-input-group">
+                    <span className="participant-label">
+                      면접관 {String.fromCharCode(65 + index)}
+                    </span>
+                    <input
+                      value={participant}
+                      placeholder={participantExamples[index] ?? '면접관 이름을 입력해 주세요'}
+                      onChange={(e) => updateParticipant(index, e.target.value)}
+                    />
+                  </div>
                   <button
                     type="button"
                     className="ghost-button"
@@ -486,6 +509,34 @@ function ManagePage() {
     )
   }, [availabilityBySlot, bundle])
 
+  const highestOverlapCount = useMemo(() => {
+    if (!bundle || bundle.slots.length === 0) {
+      return 0
+    }
+
+    return Math.max(
+      ...bundle.slots.map((slot) => availabilityBySlot.get(slot.id)?.size ?? 0),
+      0,
+    )
+  }, [availabilityBySlot, bundle])
+
+  const prioritySlotIds = useMemo(() => {
+    if (!bundle || highestOverlapCount === 0) {
+      return new Set<string>()
+    }
+
+    return new Set(
+      bundle.slots
+        .filter((slot) => (availabilityBySlot.get(slot.id)?.size ?? 0) === highestOverlapCount)
+        .map((slot) => slot.id),
+    )
+  }, [availabilityBySlot, bundle, highestOverlapCount])
+
+  const groupedManageSlots = useMemo(
+    () => groupSlotsByDate(bundle?.slots ?? []),
+    [bundle?.slots],
+  )
+
   const loadBundle = async () => {
     setLoading(true)
     setError(null)
@@ -563,48 +614,65 @@ function ManagePage() {
             </div>
           </div>
 
-          <div className="slot-list">
-            {bundle.slots.map((slot) => {
-              const matchedIds = availabilityBySlot.get(slot.id) ?? new Set<string>()
-              const participantNames = bundle.participants
-                .filter((participant) => matchedIds.has(participant.id))
-                .map((participant) => participant.name)
-              const isCommon = commonSlotIds.has(slot.id)
-              const isFinal = bundle.event.finalized_slot_id === slot.id
+          <div className="calendar-grid">
+            {groupedManageSlots.map((group) => (
+              <section className="calendar-day" key={group.date}>
+                <div className="calendar-day-head">
+                  <h3>{formatDate(group.date)}</h3>
+                  <span>{group.items.length}개 시간대</span>
+                </div>
 
-              return (
-                <article
-                  className={`slot-card${isCommon ? ' common' : ''}${isFinal ? ' final' : ''}`}
-                  key={slot.id}
-                >
-                  <div>
-                    <div className="slot-title">{formatSlotLabel(slot)}</div>
-                    <p>
-                      가능 인원 {matchedIds.size}/{bundle.participants.length}
-                    </p>
-                    <div className="name-tags">
-                      {participantNames.length > 0 ? (
-                        participantNames.map((name) => <span key={name}>{name}</span>)
-                      ) : (
-                        <span>아직 응답 없음</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="slot-actions">
-                    {isCommon ? <span className="pill success">모두 가능</span> : null}
-                    {isFinal ? <span className="pill accent">최종 확정</span> : null}
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => finalizeSlot(slot.id)}
-                      disabled={savingSlotId !== null}
-                    >
-                      {savingSlotId === slot.id ? '저장 중...' : '이 시간으로 확정'}
-                    </button>
-                  </div>
-                </article>
-              )
-            })}
+                <div className="calendar-slot-list">
+                  {group.items.map((slot) => {
+                    const matchedIds = availabilityBySlot.get(slot.id) ?? new Set<string>()
+                    const participantNames = bundle.participants
+                      .filter((participant) => matchedIds.has(participant.id))
+                      .map((participant) => participant.name)
+                    const isCommon = commonSlotIds.has(slot.id)
+                    const isPriority = prioritySlotIds.has(slot.id)
+                    const isFinal = bundle.event.finalized_slot_id === slot.id
+
+                    return (
+                      <article
+                        className={`calendar-slot manage-slot${isCommon ? ' common' : ''}${isPriority ? ' priority' : ''}${isFinal ? ' final' : ''}`}
+                        key={slot.id}
+                      >
+                        <div className="calendar-slot-top">
+                          <strong>
+                            {slot.start_time} - {slot.end_time}
+                          </strong>
+                          <span>
+                            {matchedIds.size}/{bundle.participants.length}명 가능
+                          </span>
+                        </div>
+                        <div className="name-tags">
+                          {participantNames.length > 0 ? (
+                            participantNames.map((name) => <span key={name}>{name}</span>)
+                          ) : (
+                            <span>아직 응답 없음</span>
+                          )}
+                        </div>
+                        <div className="slot-actions">
+                          <div className="pill-row">
+                            {isPriority ? <span className="pill danger">1순위 겹침</span> : null}
+                            {isCommon ? <span className="pill success">모두 가능</span> : null}
+                            {isFinal ? <span className="pill accent">최종 확정</span> : null}
+                          </div>
+                          <button
+                            className="primary-button"
+                            type="button"
+                            onClick={() => finalizeSlot(slot.id)}
+                            disabled={savingSlotId !== null}
+                          >
+                            {savingSlotId === slot.id ? '저장 중...' : '이 시간으로 확정'}
+                          </button>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
 
           <div className="finalize-bar">
@@ -817,6 +885,7 @@ function InvitePage() {
 
   const finalizedSlot =
     bundle.slots.find((slot) => slot.id === bundle.event.finalized_slot_id) ?? null
+  const groupedInviteSlots = groupSlotsByDate(bundle.slots)
 
   return (
     <main className="page-shell inner-page">
@@ -853,20 +922,39 @@ function InvitePage() {
             </div>
           </div>
 
-          <div className="check-grid">
-            {bundle.slots.map((slot) => {
-              const checked = selectedSlotIds.has(slot.id)
-              return (
-                <label className={`check-card${checked ? ' checked' : ''}`} key={slot.id}>
-                  <input
-                    checked={checked}
-                    type="checkbox"
-                    onChange={() => toggleSlot(slot.id)}
-                  />
-                  <span>{formatSlotLabel(slot)}</span>
-                </label>
-              )
-            })}
+          <div className="calendar-grid">
+            {groupedInviteSlots.map((group) => (
+              <section className="calendar-day" key={group.date}>
+                <div className="calendar-day-head">
+                  <h3>{formatDate(group.date)}</h3>
+                  <span>{group.items.length}개 시간대</span>
+                </div>
+
+                <div className="calendar-slot-list">
+                  {group.items.map((slot) => {
+                    const checked = selectedSlotIds.has(slot.id)
+                    return (
+                      <label
+                        className={`calendar-slot select-slot${checked ? ' checked' : ''}`}
+                        key={slot.id}
+                      >
+                        <input
+                          checked={checked}
+                          type="checkbox"
+                          onChange={() => toggleSlot(slot.id)}
+                        />
+                        <div className="calendar-slot-top">
+                          <strong>
+                            {slot.start_time} - {slot.end_time}
+                          </strong>
+                          <span>{checked ? '선택됨' : '선택 가능'}</span>
+                        </div>
+                      </label>
+                    )
+                  })}
+                </div>
+              </section>
+            ))}
           </div>
 
           {error ? <p className="error-text">{error}</p> : null}
