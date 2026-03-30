@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { BrowserRouter, Link, Route, Routes, useParams } from 'react-router-dom'
 import './App.css'
@@ -54,6 +54,21 @@ function groupSlotsByDate<T extends { slot_date: string }>(slots: T[]) {
 
   return Array.from(groups.entries()).map(([date, items]) => ({
     date,
+    items,
+  }))
+}
+
+function groupSlotsByTime<T extends { start_time: string }>(slots: T[]) {
+  const groups = new Map<string, T[]>()
+
+  slots.forEach((slot) => {
+    const current = groups.get(slot.start_time) ?? []
+    current.push(slot)
+    groups.set(slot.start_time, current)
+  })
+
+  return Array.from(groups.entries()).map(([time, items]) => ({
+    time,
     items,
   }))
 }
@@ -230,6 +245,37 @@ function setStoredPin(storageKey: string, value: string) {
   }
 }
 
+function getStoredCreatedLinks() {
+  if (typeof window === 'undefined') {
+    return null
+  }
+
+  const raw = window.sessionStorage.getItem('createdLinks')
+
+  if (!raw) {
+    return null
+  }
+
+  try {
+    return JSON.parse(raw) as CreatedLinks
+  } catch {
+    window.sessionStorage.removeItem('createdLinks')
+    return null
+  }
+}
+
+function setStoredCreatedLinks(value: CreatedLinks | null) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  if (value) {
+    window.sessionStorage.setItem('createdLinks', JSON.stringify(value))
+  } else {
+    window.sessionStorage.removeItem('createdLinks')
+  }
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -253,6 +299,14 @@ function HomePage() {
   const [createdLinks, setCreatedLinks] = useState<CreatedLinks | null>(null)
   const [excludedDates, setExcludedDates] = useState<Set<string>>(new Set())
   const [loadingExcludedDates, setLoadingExcludedDates] = useState(false)
+
+  useEffect(() => {
+    setCreatedLinks(getStoredCreatedLinks())
+  }, [])
+
+  useEffect(() => {
+    setStoredCreatedLinks(createdLinks)
+  }, [createdLinks])
 
   useEffect(() => {
     let cancelled = false
@@ -582,6 +636,7 @@ function ManagePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [savingSlotId, setSavingSlotId] = useState<string | null>(null)
+  const [selectedFinalizeSlotId, setSelectedFinalizeSlotId] = useState<string | null>(null)
   const [requiresPin, setRequiresPin] = useState(false)
   const [pinInput, setPinInput] = useState('')
   const [activePin, setActivePin] = useState('')
@@ -673,6 +728,12 @@ function ManagePage() {
     () => groupSlotsByDate(bundle?.slots ?? []),
     [bundle?.slots],
   )
+  const manageDateColumns = groupedManageSlots.map((group) => ({
+    date: group.date,
+    label: formatDate(group.date),
+    slotsByTime: new Map(group.items.map((slot) => [slot.start_time, slot])),
+  }))
+  const manageTimeRows = groupSlotsByTime(bundle?.slots ?? []).map((group) => group.time)
 
   const loadBundle = async (pinOverride?: string) => {
     setLoading(true)
@@ -688,6 +749,10 @@ function ManagePage() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    setSelectedFinalizeSlotId(bundle?.event.finalized_slot_id ?? null)
+  }, [bundle?.event.finalized_slot_id])
 
   const handleUnlock = async (submitEvent: FormEvent<HTMLFormElement>) => {
     submitEvent.preventDefault()
@@ -790,83 +855,90 @@ function ManagePage() {
             </div>
           </div>
 
-          <div className="calendar-grid manage-grid">
-            {groupedManageSlots.map((group) => (
-              <section className="calendar-day" key={group.date}>
-                <div className="calendar-day-head">
-                  <h3>{formatDate(group.date)}</h3>
-                  <span>{group.items.length}개 시간대</span>
+          <div className="matrix-board">
+            <div
+              className="matrix-grid"
+              style={
+                {
+                  '--matrix-columns': manageDateColumns.length,
+                } as React.CSSProperties
+              }
+            >
+              <div className="matrix-corner" />
+              {manageDateColumns.map((column) => (
+                <div className="matrix-date-head" key={column.date}>
+                  {column.label}
                 </div>
+              ))}
 
-                <div className="calendar-slot-list">
-                  {group.items.map((slot, index) => {
-                    const matchedIds = availabilityBySlot.get(slot.id) ?? new Set<string>()
-                    const participantNames = bundle.participants
-                      .filter((participant) => matchedIds.has(participant.id))
-                      .map((participant) => participant.name)
+              {manageTimeRows.map((time) => (
+                <Fragment key={time}>
+                  <div className="matrix-time-label">{formatTimeValue(time)}</div>
+                  {manageDateColumns.map((column) => {
+                    const slot = column.slotsByTime.get(time)
+
+                    if (!slot) {
+                      return <div className="matrix-cell matrix-cell-empty" key={`${column.date}-${time}`} />
+                    }
+
+                    const overlapCount = availabilityBySlot.get(slot.id)?.size ?? 0
                     const isCommon = commonSlotIds.has(slot.id)
                     const isPriority = prioritySlotIds.has(slot.id)
                     const isFinal = bundle.event.finalized_slot_id === slot.id
+                    const isSelected = selectedFinalizeSlotId === slot.id
 
                     return (
-                      <article
-                        className={`calendar-slot manage-slot${isCommon ? ' common' : ''}${isPriority ? ' priority' : ''}${isFinal ? ' final' : ''}`}
+                      <button
+                        aria-label={`${column.label} ${formatTimeValue(slot.start_time)}-${formatTimeValue(slot.end_time)}`}
+                        className={`matrix-cell manage-matrix-cell${isSelected ? ' checked' : ''}${isPriority ? ' hinted' : ''}${isFinal ? ' finalized' : ''}`}
                         key={slot.id}
+                        type="button"
+                        onClick={() => setSelectedFinalizeSlotId(slot.id)}
                       >
-                        <div className="slot-order-badge">{String(index + 1).padStart(2, '0')}</div>
-                        <div className="slot-main">
-                          <div className="slot-primary-line">
-                            <strong className="slot-time">
-                              {formatTimeValue(slot.start_time)} - {formatTimeValue(slot.end_time)}
-                            </strong>
-                            <span className="slot-summary">
-                              {matchedIds.size}/{bundle.participants.length}명 가능
-                            </span>
-                          </div>
-                          <div className="slot-secondary-line">
-                            <div className="name-tags inline-tags">
-                              {participantNames.length > 0 ? (
-                                participantNames.map((name) => <span key={name}>{name}</span>)
-                              ) : null}
-                            </div>
-                          </div>
-                        </div>
-                        <div className="slot-actions slot-actions-inline">
-                          <div className="pill-row">
-                            {isPriority ? <span className="pill danger">1순위 겹침</span> : null}
-                            {isCommon ? <span className="pill success">모두 가능</span> : null}
-                            {isFinal ? <span className="pill accent">최종 확정</span> : null}
-                          </div>
-                          <button
-                            className="primary-button"
-                            type="button"
-                            onClick={() => finalizeSlot(slot.id)}
-                            disabled={savingSlotId !== null}
-                          >
-                            {savingSlotId === slot.id ? '저장 중...' : '이 시간으로 확정'}
-                          </button>
-                        </div>
-                      </article>
+                        <span className="matrix-cell-count">{overlapCount}</span>
+                        {isFinal ? <span className="matrix-final-ring" aria-hidden="true" /> : null}
+                        <span className="matrix-dot-stack" aria-hidden="true">
+                          {isCommon ? <span className="matrix-mini-dot success" /> : null}
+                          {isPriority ? <span className="matrix-mini-dot warning" /> : null}
+                        </span>
+                      </button>
                     )
                   })}
-                </div>
-              </section>
-            ))}
+                </Fragment>
+              ))}
+            </div>
+
+            <div className="matrix-legend">
+              <span><i className="legend-dot count" /> 숫자 = 가능 인원</span>
+              <span><i className="legend-dot selected" /> 선택한 확정 후보</span>
+              <span><i className="legend-dot hinted" /> 1순위 겹침</span>
+              <span><i className="legend-dot success" /> 모두 가능</span>
+            </div>
           </div>
 
           <div className="finalize-bar">
             <div>
               <h3>확정 해제</h3>
-              <p>다시 검토하려면 현재 확정된 시간을 비울 수 있습니다.</p>
+              <p>매트릭스에서 시간을 고른 뒤 확정하거나, 현재 확정을 해제할 수 있습니다.</p>
             </div>
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={() => finalizeSlot(null)}
-              disabled={savingSlotId !== null}
-            >
-              {savingSlotId === 'clear' ? '해제 중...' : '확정 해제'}
-            </button>
+            <div className="finalize-actions">
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => finalizeSlot(selectedFinalizeSlotId)}
+                disabled={savingSlotId !== null || !selectedFinalizeSlotId}
+              >
+                {savingSlotId === selectedFinalizeSlotId ? '저장 중...' : '선택한 시간 확정'}
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => finalizeSlot(null)}
+                disabled={savingSlotId !== null}
+              >
+                {savingSlotId === 'clear' ? '해제 중...' : '확정 해제'}
+              </button>
+            </div>
           </div>
         </div>
       </section>
@@ -1197,6 +1269,12 @@ function InvitePage() {
   const finalizedSlot =
     bundle.slots.find((slot) => slot.id === bundle.event.finalized_slot_id) ?? null
   const groupedInviteSlots = groupSlotsByDate(visibleSlots)
+  const inviteDateColumns = groupedInviteSlots.map((group) => ({
+    date: group.date,
+    label: formatDate(group.date),
+    slotsByTime: new Map(group.items.map((slot) => [slot.start_time, slot])),
+  }))
+  const inviteTimeRows = groupSlotsByTime(visibleSlots).map((group) => group.time)
 
   return (
     <main className="page-shell inner-page">
@@ -1258,60 +1336,65 @@ function InvitePage() {
           </div>
 
           {visibleSlots.length > 0 ? (
-            <div className="calendar-grid">
-              {groupedInviteSlots.map((group) => (
-                <section className="calendar-day" key={group.date}>
-                  <div className="calendar-day-head">
-                    <h3>{formatDate(group.date)}</h3>
-                    <span>{group.items.length}개 시간대</span>
+            <div className="matrix-board">
+              <div
+                className="matrix-grid"
+                style={
+                  {
+                    '--matrix-columns': inviteDateColumns.length,
+                  } as React.CSSProperties
+                }
+              >
+                <div className="matrix-corner" />
+                {inviteDateColumns.map((column) => (
+                  <div className="matrix-date-head" key={column.date}>
+                    {column.label}
                   </div>
+                ))}
 
-                  <div className="calendar-slot-list">
-                    {group.items.map((slot, index) => {
+                {inviteTimeRows.map((time) => (
+                  <Fragment key={time}>
+                    <div className="matrix-time-label">{formatTimeValue(time)}</div>
+                    {inviteDateColumns.map((column) => {
+                      const slot = column.slotsByTime.get(time)
+
+                      if (!slot) {
+                        return <div className="matrix-cell matrix-cell-empty" key={`${column.date}-${time}`} />
+                      }
+
                       const checked = selectedSlotIds.has(slot.id)
                       const previousOverlapCount = previousOverlapBySlot.get(slot.id)?.size ?? 0
                       const projectedOverlapCount = previousOverlapCount + (checked ? 1 : 0)
+
                       return (
-                        <label
-                          className={`calendar-slot select-slot${checked ? ' checked' : ''}`}
+                        <button
+                          aria-label={`${column.label} ${formatTimeValue(slot.start_time)}-${formatTimeValue(slot.end_time)}`}
+                          className={`matrix-cell${checked ? ' checked' : ''}${previousOverlapCount > 0 ? ' hinted' : ''}`}
                           key={slot.id}
+                          type="button"
+                          onClick={() => toggleSlot(slot.id)}
                         >
-                          <div className="slot-order-badge">{String(index + 1).padStart(2, '0')}</div>
-                          <input
-                            checked={checked}
-                            type="checkbox"
-                            onChange={() => toggleSlot(slot.id)}
-                          />
-                          <div className="slot-main">
-                            <div className="slot-primary-line">
-                              <strong className="slot-time">
-                                {formatTimeValue(slot.start_time)} - {formatTimeValue(slot.end_time)}
-                              </strong>
-                              <span className="slot-summary">{checked ? '선택됨' : '선택 가능'}</span>
-                            </div>
-                            <div className="slot-secondary-line">
-                              {participantOrder > 0 ? (
-                                <div className="slot-overlap-guide slot-overlap-inline">
-                                  <div className="overlap-dots" aria-hidden="true">
-                                    {Array.from({ length: projectedOverlapCount }).map((_, dotIndex) => (
-                                      <span className="overlap-dot" key={dotIndex} />
-                                    ))}
-                                  </div>
-                                  <p>
-                                    {checked
-                                      ? `${projectedOverlapCount}명 교집합 후보`
-                                      : `앞선 면접관 ${previousOverlapCount}명이 모두 고른 시간`}
-                                  </p>
-                                </div>
-                              ) : null}
-                            </div>
-                          </div>
-                        </label>
+                          {checked ? <span className="matrix-dot" /> : null}
+                          {participantOrder > 0 && projectedOverlapCount > 1 ? (
+                            <span className="matrix-dot-stack" aria-hidden="true">
+                              {Array.from({ length: projectedOverlapCount - 1 }).map((_, dotIndex) => (
+                                <span className="matrix-mini-dot" key={dotIndex} />
+                              ))}
+                            </span>
+                          ) : null}
+                        </button>
                       )
                     })}
-                  </div>
-                </section>
-              ))}
+                  </Fragment>
+                ))}
+              </div>
+
+              <div className="matrix-legend">
+                <span><i className="legend-dot selected" /> 내가 선택한 시간</span>
+                {participantOrder > 0 ? (
+                  <span><i className="legend-dot hinted" /> 앞선 응답과 겹치는 후보</span>
+                ) : null}
+              </div>
             </div>
           ) : (
             <div className="filtered-empty-state">
