@@ -35,8 +35,9 @@ type EventBundle = {
 
 type CreatedLinks = {
   managementLink: string
+  managementPath: string
   managementPin: string
-  participantLinks: Array<{ name: string; link: string; pin: string }>
+  participantLinks: Array<{ name: string; link: string; path: string; pin: string }>
 }
 
 const defaultParticipants = ['', '', '']
@@ -398,10 +399,12 @@ function HomePage() {
       const baseUrl = getBaseUrl()
       setCreatedLinks({
         managementLink: `${baseUrl}/manage/${managementCode}`,
+        managementPath: `/manage/${managementCode}`,
         managementPin,
         participantLinks: insertedParticipants.map((participant) => ({
           name: participant.name,
           link: `${baseUrl}/invite/${participant.invite_code}`,
+          path: `/invite/${participant.invite_code}`,
           pin: participant.access_pin ?? '미설정',
         })),
       })
@@ -543,20 +546,20 @@ function HomePage() {
             <div className="link-result">
               <div className="link-group">
                 <h3>인사 담당자 관리 링크</h3>
-                <a href={createdLinks.managementLink}>{createdLinks.managementLink}</a>
+                <Link to={createdLinks.managementPath}>{createdLinks.managementLink}</Link>
                 <div className="pin-badge">접속 PIN {createdLinks.managementPin}</div>
               </div>
 
               <div className="link-group">
                 <h3>면접관 초대 링크</h3>
                 {createdLinks.participantLinks.map((item) => (
-                  <div className="invite-link-row" key={item.link}>
-                    <div className="invite-link-meta">
-                      <strong>{item.name}</strong>
-                      <div className="pin-badge">접속 PIN {item.pin}</div>
+                    <div className="invite-link-row" key={item.link}>
+                      <div className="invite-link-meta">
+                        <strong>{item.name}</strong>
+                        <div className="pin-badge">접속 PIN {item.pin}</div>
+                      </div>
+                      <Link to={item.path}>{item.link}</Link>
                     </div>
-                    <a href={item.link}>{item.link}</a>
-                  </div>
                 ))}
               </div>
             </div>
@@ -824,9 +827,7 @@ function ManagePage() {
                             <div className="name-tags inline-tags">
                               {participantNames.length > 0 ? (
                                 participantNames.map((name) => <span key={name}>{name}</span>)
-                              ) : (
-                                <span>아직 응답 없음</span>
-                              )}
+                              ) : null}
                             </div>
                           </div>
                         </div>
