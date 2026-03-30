@@ -787,7 +787,7 @@ function ManagePage() {
             </div>
           </div>
 
-          <div className="calendar-grid">
+          <div className="calendar-grid manage-grid">
             {groupedManageSlots.map((group) => (
               <section className="calendar-day" key={group.date}>
                 <div className="calendar-day-head">
