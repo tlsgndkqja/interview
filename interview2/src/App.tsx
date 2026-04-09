@@ -40,8 +40,18 @@ type CreatedLinks = {
   participantLinks: Array<{ name: string; link: string; path: string; pin: string }>
 }
 
+type CreatedScheduleHistory = {
+  id: string
+  title: string
+  dateRange: string
+  createdAt: string
+  links: CreatedLinks
+}
+
 const defaultParticipants = ['', '', '']
 const participantExamples = ['예: 김민수', '예: 박서연', '예: 이도현']
+const CREATED_LINK_HISTORY_KEY = 'createdLinkHistory'
+const CREATED_LINK_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
 
 function groupSlotsByDate<T extends { slot_date: string }>(slots: T[]) {
   const groups = new Map<string, T[]>()
@@ -245,35 +255,45 @@ function setStoredPin(storageKey: string, value: string) {
   }
 }
 
-function getStoredCreatedLinks() {
+function pruneCreatedScheduleHistory(items: CreatedScheduleHistory[]) {
+  const cutoff = Date.now() - CREATED_LINK_RETENTION_MS
+
+  return items
+    .filter((item) => new Date(item.createdAt).getTime() >= cutoff)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+}
+
+function getStoredCreatedScheduleHistory() {
   if (typeof window === 'undefined') {
-    return null
+    return []
   }
 
-  const raw = window.sessionStorage.getItem('createdLinks')
+  const raw = window.localStorage.getItem(CREATED_LINK_HISTORY_KEY)
 
   if (!raw) {
-    return null
+    return []
   }
 
   try {
-    return JSON.parse(raw) as CreatedLinks
+    const parsed = JSON.parse(raw) as CreatedScheduleHistory[]
+    const pruned = pruneCreatedScheduleHistory(parsed)
+    window.localStorage.setItem(CREATED_LINK_HISTORY_KEY, JSON.stringify(pruned))
+    return pruned
   } catch {
-    window.sessionStorage.removeItem('createdLinks')
-    return null
+    window.localStorage.removeItem(CREATED_LINK_HISTORY_KEY)
+    return []
   }
 }
 
-function setStoredCreatedLinks(value: CreatedLinks | null) {
+function setStoredCreatedScheduleHistory(value: CreatedScheduleHistory[]) {
   if (typeof window === 'undefined') {
     return
   }
 
-  if (value) {
-    window.sessionStorage.setItem('createdLinks', JSON.stringify(value))
-  } else {
-    window.sessionStorage.removeItem('createdLinks')
-  }
+  window.localStorage.setItem(
+    CREATED_LINK_HISTORY_KEY,
+    JSON.stringify(pruneCreatedScheduleHistory(value)),
+  )
 }
 
 function App() {
@@ -296,17 +316,15 @@ function HomePage() {
   const [participants, setParticipants] = useState(defaultParticipants)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [createdLinks, setCreatedLinks] = useState<CreatedLinks | null>(null)
+  const [createdSchedules, setCreatedSchedules] = useState<CreatedScheduleHistory[]>(
+    () => getStoredCreatedScheduleHistory(),
+  )
   const [excludedDates, setExcludedDates] = useState<Set<string>>(new Set())
   const [loadingExcludedDates, setLoadingExcludedDates] = useState(false)
 
   useEffect(() => {
-    setCreatedLinks(getStoredCreatedLinks())
-  }, [])
-
-  useEffect(() => {
-    setStoredCreatedLinks(createdLinks)
-  }, [createdLinks])
+    setStoredCreatedScheduleHistory(createdSchedules)
+  }, [createdSchedules])
 
   useEffect(() => {
     let cancelled = false
@@ -404,6 +422,7 @@ function HomePage() {
     try {
       const managementCode = randomCode()
       const managementPin = randomPin()
+      const participantAccessPin = randomPin()
       const eventPayload: EventInsert = {
         title: title.trim(),
         start_date: startDate,
@@ -425,7 +444,7 @@ function HomePage() {
       const participantPayload: ParticipantInsert[] = trimmedParticipants.map((name) => ({
         event_id: insertedEvent.id,
         invite_code: randomCode(),
-        access_pin: randomPin(),
+        access_pin: participantAccessPin,
         name,
       }))
 
@@ -451,7 +470,7 @@ function HomePage() {
       }
 
       const baseUrl = getBaseUrl()
-      setCreatedLinks({
+      const nextLinks: CreatedLinks = {
         managementLink: `${baseUrl}/manage/${managementCode}`,
         managementPath: `/manage/${managementCode}`,
         managementPin,
@@ -461,7 +480,20 @@ function HomePage() {
           path: `/invite/${participant.invite_code}`,
           pin: participant.access_pin ?? '미설정',
         })),
-      })
+      }
+
+      setCreatedSchedules((current) =>
+        pruneCreatedScheduleHistory([
+          {
+            id: managementCode,
+            title: title.trim(),
+            dateRange: formatDateRange(startDate, endDate),
+            createdAt: new Date().toISOString(),
+            links: nextLinks,
+          },
+          ...current,
+        ]),
+      )
     } catch (submitError) {
       const message =
         submitError instanceof Error
@@ -596,26 +628,38 @@ function HomePage() {
             </div>
           </div>
 
-          {createdLinks ? (
+          {createdSchedules.length > 0 ? (
             <div className="link-result">
-              <div className="link-group">
-                <h3>인사 담당자 관리 링크</h3>
-                <Link to={createdLinks.managementPath}>{createdLinks.managementLink}</Link>
-                <div className="pin-badge">접속 PIN {createdLinks.managementPin}</div>
-              </div>
-
-              <div className="link-group">
-                <h3>면접관 초대 링크</h3>
-                {createdLinks.participantLinks.map((item) => (
-                    <div className="invite-link-row" key={item.link}>
-                      <div className="invite-link-meta">
-                        <strong>{item.name}</strong>
-                        <div className="pin-badge">접속 PIN {item.pin}</div>
-                      </div>
-                      <Link to={item.path}>{item.link}</Link>
+              {createdSchedules.map((schedule) => (
+                <section className="history-card" key={schedule.id}>
+                  <div className="history-head">
+                    <div>
+                      <h3>{schedule.title}</h3>
+                      <p>{schedule.dateRange}</p>
                     </div>
-                ))}
-              </div>
+                    <span className="chip">최근 7일 보관</span>
+                  </div>
+
+                  <div className="link-group">
+                    <h3>인사 담당자 관리 링크</h3>
+                    <Link to={schedule.links.managementPath}>{schedule.links.managementLink}</Link>
+                    <div className="pin-badge">접속 PIN {schedule.links.managementPin}</div>
+                  </div>
+
+                  <div className="link-group">
+                    <h3>면접관 초대 링크</h3>
+                    {schedule.links.participantLinks.map((item) => (
+                      <div className="invite-link-row" key={item.link}>
+                        <div className="invite-link-meta">
+                          <strong>{item.name}</strong>
+                          <div className="pin-badge">접속 PIN {item.pin}</div>
+                        </div>
+                        <Link to={item.path}>{item.link}</Link>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
             </div>
           ) : (
             <div className="empty-state">
